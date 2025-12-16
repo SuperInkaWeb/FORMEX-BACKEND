@@ -1,8 +1,19 @@
--- 1. CREAR BASE DE DATOS (Si no existe)
+-- ==================================================================================
+-- SCRIPT DE INICIALIZACIÓN - FORMEX DB
+-- Autor: [Aladan Lazo]
+-- Descripción: Estructura completa de la base de datos con datos semilla.
+-- Motor: MySQL / MariaDB
+-- ==================================================================================
+
+-- 1. CREACIÓN DE LA BASE DE DATOS
+-- ----------------------------------------------------------------------------------
 CREATE DATABASE IF NOT EXISTS formex_db;
 USE formex_db;
 
--- 2. TABLA ROLES
+-- 2. TABLAS DE SEGURIDAD (Spring Security)
+-- ----------------------------------------------------------------------------------
+
+-- Tabla de Roles
 CREATE TABLE IF NOT EXISTS roles (
                                      id BIGINT NOT NULL AUTO_INCREMENT,
                                      name VARCHAR(50) NOT NULL,
@@ -10,7 +21,7 @@ CREATE TABLE IF NOT EXISTS roles (
     UNIQUE KEY uk_roles_name (name)
     );
 
--- 3. TABLA USUARIOS
+-- Tabla de Usuarios
 CREATE TABLE IF NOT EXISTS users (
                                      id BIGINT NOT NULL AUTO_INCREMENT,
                                      full_name VARCHAR(100) NOT NULL,
@@ -25,8 +36,7 @@ CREATE TABLE IF NOT EXISTS users (
     UNIQUE KEY uk_users_email (email)
     );
 
--- 4. TABLA INTERMEDIA (MUCHOS A MUCHOS)
--- Relaciona usuarios con roles
+-- Tabla Intermedia Usuarios-Roles
 CREATE TABLE IF NOT EXISTS user_roles (
                                           user_id BIGINT NOT NULL,
                                           role_id BIGINT NOT NULL,
@@ -35,13 +45,7 @@ CREATE TABLE IF NOT EXISTS user_roles (
     CONSTRAINT fk_user_roles_role FOREIGN KEY (role_id) REFERENCES roles (id)
     );
 
--- 5. DATOS OBLIGATORIOS (SEMILLA)
--- Sin esto, el registro de usuarios fallará porque no encontrará el rol 'ROLE_STUDENT'
-INSERT INTO roles (name) VALUES ('ROLE_ADMIN');
-INSERT INTO roles (name) VALUES ('ROLE_STUDENT');
-INSERT INTO roles (name) VALUES ('ROLE_INSTRUCTOR');
-
--- TABLA PARA RECUPERACIÓN DE CONTRASEÑA (Entregable 1.05)
+-- Tabla de Tokens de Recuperación de Contraseña
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
                                                      id BIGINT AUTO_INCREMENT PRIMARY KEY,
                                                      token VARCHAR(255) NOT NULL,
@@ -50,14 +54,17 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
     CONSTRAINT fk_token_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
 
--- TABLA DE CATEGORÍAS (Entregable 2.01)
+-- 3. TABLAS DE NEGOCIO (Cursos y Categorías)
+-- ----------------------------------------------------------------------------------
+
+-- Tabla de Categorías
 CREATE TABLE IF NOT EXISTS categories (
                                           id BIGINT AUTO_INCREMENT PRIMARY KEY,
                                           name VARCHAR(100) NOT NULL UNIQUE,
     description TEXT
     );
 
--- TABLA DE CURSOS (Entregable 2.02 y 2.03)
+-- Tabla de Cursos
 CREATE TABLE IF NOT EXISTS courses (
                                        id BIGINT AUTO_INCREMENT PRIMARY KEY,
                                        title VARCHAR(200) NOT NULL,
@@ -65,6 +72,7 @@ CREATE TABLE IF NOT EXISTS courses (
     price DECIMAL(10, 2) NOT NULL,
     level VARCHAR(20), -- PRINCIPIANTE, INTERMEDIO, AVANZADO
     image_url VARCHAR(255),
+    enabled BIT(1) DEFAULT 1, -- Campo requerido para validación JPA
     instructor_id BIGINT,
     category_id BIGINT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -73,15 +81,7 @@ CREATE TABLE IF NOT EXISTS courses (
     CONSTRAINT fk_course_category FOREIGN KEY (category_id) REFERENCES categories(id)
     );
 
--- DATOS: CATEGORÍAS
-INSERT INTO categories (name, description) VALUES
-                                               ('Programación', 'Desarrollo de software, web y móvil'),
-                                               ('Diseño', 'UX/UI, Diseño Gráfico y Prototipado'),
-                                               ('Data', 'Data Science, Big Data y Analytics'),
-                                               ('Marketing', 'Marketing Digital, SEO y Growth')
-    ON DUPLICATE KEY UPDATE name=name; -- Evita error si ya existen
-
--- Tabla de Sesiones
+-- Tabla de Sesiones del Curso
 CREATE TABLE IF NOT EXISTS course_sessions (
                                                id BIGINT AUTO_INCREMENT PRIMARY KEY,
                                                course_id BIGINT NOT NULL,
@@ -90,19 +90,40 @@ CREATE TABLE IF NOT EXISTS course_sessions (
     duration_minutes INT DEFAULT 60,
     meeting_link VARCHAR(255),
     is_completed BIT(1) DEFAULT 0,
-
+    enabled BIT(1) DEFAULT 1,
     CONSTRAINT fk_session_course FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE
     );
 
-ALTER TABLE course_sessions ADD COLUMN enabled BIT(1) DEFAULT 1;
+-- Tabla de Asistencias
+CREATE TABLE IF NOT EXISTS attendances (
+                                           id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                           session_id BIGINT NOT NULL,
+                                           student_id BIGINT NOT NULL,
+                                           attended BOOLEAN DEFAULT TRUE, -- Presente o Ausente
+                                           marked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                                           CONSTRAINT fk_attendance_session FOREIGN KEY (session_id) REFERENCES course_sessions(id),
+    CONSTRAINT fk_attendance_student FOREIGN KEY (student_id) REFERENCES users(id)
+    );
 
-CREATE TABLE attendances (
-                             id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                             session_id BIGINT NOT NULL,
-                             student_id BIGINT NOT NULL,
-                             attended BOOLEAN DEFAULT TRUE, -- Presente o Ausente
-                             marked_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+-- 4. DATOS SEMILLA (SEED DATA)
+-- ----------------------------------------------------------------------------------
+
+-- Roles predeterminados
+INSERT INTO roles (name) VALUES
+                             ('ROLE_ADMIN'),
+                             ('ROLE_STUDENT'),
+                             ('ROLE_INSTRUCTOR')
+    ON DUPLICATE KEY UPDATE name=name;
+
+-- Categorías predeterminadas
+INSERT INTO categories (name, description) VALUES
+                                               ('Programación', 'Desarrollo de software, web y móvil'),
+                                               ('Diseño', 'UX/UI, Diseño Gráfico y Prototipado'),
+                                               ('Data', 'Data Science, Big Data y Analytics'),
+                                               ('Marketing', 'Marketing Digital, SEO y Growth')
+    ON DUPLICATE KEY UPDATE name=name;
+
+-- Fin del script
 
 -- (Opcional) Confirmar que se crearon los roles
 SELECT * FROM roles;
@@ -112,3 +133,4 @@ SELECT * FROM courses;
 SELECT * FROM password_reset_tokens;
 SELECT * FROM categories;
 SELECT * FROM course_sessions;
+SELECT * FROM attendances;
