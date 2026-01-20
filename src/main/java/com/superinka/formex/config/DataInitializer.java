@@ -18,44 +18,43 @@ import java.util.HashSet;
 @RequiredArgsConstructor
 public class DataInitializer {
 
-    private final UserRepository userRepository;
-    private final RoleRepository roleRepository;
-    private final PasswordEncoder passwordEncoder;
-
-    // Datos del admin por defecto
-    // Datos del admin por defecto
-    private static final String ADMIN_EMAIL = "admin@fornex.com";
-    private static final String ADMIN_PASSWORD = "nuevaContraseña123";
-
-    @Bean
-    public CommandLineRunner initData() {
-        return args -> {
-            // Validar si ya existe el admin para no duplicarlo
-            if (!userRepository.existsByEmail(ADMIN_EMAIL)) {
-
-                System.out.println("--- FORMEX: Creando usuario Admin inicial... ---");
-
-                // 1. Buscar el Rol ADMIN
-                Role adminRole = roleRepository.findByName(RoleName.ROLE_ADMIN)
-                        .orElseThrow(() -> new RuntimeException("Error: El Rol ADMIN no fue encontrado en la BD."));
-
-                // 2. Crear el Usuario
-                User admin = User.builder()
-                        .fullName("Jeanpier Quispe Santisteba")
-                        .email(ADMIN_EMAIL)
-                        .password(passwordEncoder.encode(ADMIN_PASSWORD))
-                        .phone("999000111")
-                        .enabled(true)
-                        .roles(new HashSet<>(Collections.singletonList(adminRole))) // Asignar rol
-                        .build();
-
-                // 3. Guardar
-                userRepository.save(admin);
-
-                System.out.println("--- FORMEX: Admin creado exitosamente: " + ADMIN_EMAIL + " ---");
-            } else {
-                System.out.println("--- FORMEX: El usuario Admin ya existe. Omitiendo creación. ---");
-            }
-        };
-    }
+//    private final UserRepository userRepository;
+//    private final RoleRepository roleRepository;
+//    private final PasswordEncoder passwordEncoder;
+//
+//    //Datos del admin por defecto
+//    private static final String ADMIN_EMAIL = "admin@fornex.com";
+//    private static final String ADMIN_PASSWORD = "nuevaContraseña123";
+//
+//    @Bean
+//    public CommandLineRunner initData() {
+//        return args -> {
+//            // Validar si ya existe el admin para no duplicarlo
+//            if (!userRepository.existsByEmail(ADMIN_EMAIL)) {
+//
+//                System.out.println("--- FORMEX: Creando usuario Admin inicial... ---");
+//
+//                // 1. Buscar el Rol ADMIN (ya insertado por Flyway)
+//                Role adminRole = roleRepository.findByName(RoleName.ROLE_ADMIN)
+//                        .orElseThrow(() -> new RuntimeException("Error: El Rol ADMIN no fue encontrado en la BD."));
+//
+//                // 2. Crear el Usuario usando el Builder de Lombok
+//                User admin = User.builder()
+//                        .fullName("Formex Administrator")
+//                        .email(ADMIN_EMAIL)
+//                        .password(passwordEncoder.encode(ADMIN_PASSWORD))
+//                        .phone("999000111")
+//                        .enabled(true)
+//                        .roles(new HashSet<>(Collections.singletonList(adminRole))) // Asignar rol
+//                        .build();
+//
+//                // 3. Guardar
+//                userRepository.save(admin);
+//
+//                System.out.println("--- FORMEX: Admin creado exitosamente: " + ADMIN_EMAIL + " ---");
+//            } else {
+//                System.out.println("--- FORMEX: El usuario Admin ya existe. Omitiendo creación. ---");
+//            }
+//        };
+//    }
 }

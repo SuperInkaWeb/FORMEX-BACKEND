@@ -6,21 +6,30 @@ import com.superinka.formex.model.User;
 import com.superinka.formex.model.enums.RoleName;
 import com.superinka.formex.payload.request.LoginRequest;
 import com.superinka.formex.payload.request.SignupRequest;
+import com.superinka.formex.payload.response.JwtResponse;
 import com.superinka.formex.payload.response.MessageResponse;
 import com.superinka.formex.repository.PasswordResetTokenRepository;
 import com.superinka.formex.repository.RoleRepository;
 import com.superinka.formex.repository.UserRepository;
+import com.superinka.formex.security.JwtUtils;
 import com.superinka.formex.service.EmailService;
+import com.superinka.formex.service.impl.UserDetailsImpl;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @CrossOrigin(origins = "*", maxAge = 3600)
 @RestController
@@ -28,11 +37,44 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class AuthController {
 
+    private final AuthenticationManager authenticationManager;
     private final UserRepository userRepository;
     private final RoleRepository roleRepository;
+    private final PasswordEncoder encoder;
+    private final JwtUtils jwtUtils;
     private final EmailService emailService;
     private final PasswordResetTokenRepository tokenRepository;
-    private final PasswordEncoder encoder;
+
+    //Login
+    @PostMapping("/login")
+    public ResponseEntity<?> authenticateUser(@Valid @RequestBody LoginRequest loginRequest) {
+
+        //Autenticar {email, password}
+        Authentication authentication = authenticationManager.authenticate(
+                new UsernamePasswordAuthenticationToken(loginRequest.getEmail(), loginRequest.getPassword()));
+
+        //Guardar la autenticacion en el contexto de seguridad
+        SecurityContextHolder.getContext().setAuthentication(authentication);
+
+        //Generar Jwt
+        String jwt = jwtUtils.generateJwtToken(authentication);
+
+        //Obtener detalles del usuario
+        UserDetailsImpl userDetails = (UserDetailsImpl) authentication.getPrincipal();
+        List<String> roles = userDetails.getAuthorities().stream()
+                .map(item -> item.getAuthority())
+                .collect(Collectors.toList());
+
+        //Se extrae el nombre real de la BD
+        User user = userRepository.findById(userDetails.getId()).orElseThrow();
+
+        //Retornar respuesta
+        return ResponseEntity.ok(new JwtResponse(jwt,
+                userDetails.getId(),
+                userDetails.getEmail(),
+                user.getFullName(),
+                roles));
+    }
 
     //Registro
     @PostMapping("/register")

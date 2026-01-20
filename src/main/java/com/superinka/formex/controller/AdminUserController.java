@@ -1,25 +1,19 @@
 package com.superinka.formex.controller;
 
-import com.superinka.formex.model.*;
-import com.superinka.formex.model.enums.PaymentStatus;
+import com.superinka.formex.model.Role;
+import com.superinka.formex.model.User;
 import com.superinka.formex.model.enums.RoleName;
 import com.superinka.formex.payload.request.CreateUserRequest;
 import com.superinka.formex.payload.request.UpdateUserRequest;
 import com.superinka.formex.payload.response.MessageResponse;
-import com.superinka.formex.payload.response.StudentDto;
-import com.superinka.formex.repository.CourseRepository;
 import com.superinka.formex.repository.RoleRepository;
-import com.superinka.formex.repository.UserCourseRepository;
 import com.superinka.formex.repository.UserRepository;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
-import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.util.HashSet;
 import java.util.List;
@@ -35,29 +29,22 @@ public class AdminUserController {
     private final UserRepository userRepository;
     private final RoleRepository roleRepository;
     private final PasswordEncoder encoder;
-    private final CourseRepository courseRepository;
-    private final UserCourseRepository userCourseRepository;
 
-    // Listar todos los usuarios
+    //Listar todos los usuarios
     @GetMapping
     public List<User> getAllusers() {
         return userRepository.findAll();
     }
-    @GetMapping("/instructor/courses/{id}/students")
-    @PreAuthorize("hasRole('INSTRUCTOR')")
-    public List<StudentDto> getStudents(@PathVariable Long id) {
-        return userRepository.findStudentsByCourseId(id);
-    }
 
-    // Buscar usuario por id
+    //Buscar usuario por id
     @GetMapping("/{id}")
     public ResponseEntity<?> getUserById(@PathVariable Long id) {
         User user = userRepository.findById(id)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
+                .orElseThrow(() -> new RuntimeException("Usuario no encontrado"));
         return ResponseEntity.ok(user);
     }
 
-    // Crear usuario (Docente, Admin, Alumno) manualmente
+    //Crear usuario (Docente, Admin, Alumno) manualmente
     @PostMapping
     public ResponseEntity<?> createUser(@Valid @RequestBody CreateUserRequest request) {
         if (userRepository.existsByEmail(request.getEmail())) {
@@ -76,6 +63,7 @@ public class AdminUserController {
         Set<Role> roles = new HashSet<>();
 
         if (strRoles == null) {
+            // Por defecto estudiante si no se especifica
             roles.add(roleRepository.findByName(RoleName.ROLE_STUDENT).orElseThrow());
         } else {
             strRoles.forEach(role -> {
@@ -94,21 +82,21 @@ public class AdminUserController {
         }
 
         user.setRoles(roles);
-
-
-        userRepository.saveAndFlush(user);
+        userRepository.save(user);
 
         return ResponseEntity.ok(new MessageResponse("Usuario creado exitosamente con los roles asignados."));
     }
 
-    // Editar usuario
+    //Editar usuario
     @PutMapping("/{id}")
     public ResponseEntity<?> updateUser(@PathVariable Long id, @RequestBody UpdateUserRequest request) {
         User user = userRepository.findById(id)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
+                .orElseThrow(() -> new RuntimeException("Usuario no encontrado"));
 
         if (request.getFullname() != null) user.setFullName(request.getFullname());
         if (request.getPhone() != null) user.setPhone(request.getPhone());
+
+        // Aquí el admin puede reactivar manualmente a un usuario borrado
         if (request.getEnabled() != null) user.setEnabled(request.getEnabled());
 
         if (request.getRoles() != null && !request.getRoles().isEmpty()) {
@@ -123,51 +111,18 @@ public class AdminUserController {
             user.setRoles(newRoles);
         }
 
-        userRepository.saveAndFlush(user);
+        userRepository.save(user);
         return ResponseEntity.ok(new MessageResponse("Usuario actualizado exitosamente."));
     }
 
-
-    // Endpoint específico para asignar curso a estudiante (si prefieres ruta separada)
-    @Transactional
-    @PutMapping("/{userId}/assign-course/{courseId}")
-    public ResponseEntity<?> assignCourseToStudent(
-            @PathVariable Long userId,
-            @PathVariable Long courseId
-    ) {
-        User student = userRepository.findById(userId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
-
-        Course course = courseRepository.findById(courseId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Curso no encontrado"));
-
-        UserCourseId id = new UserCourseId(userId, courseId);
-
-        if (userCourseRepository.existsById(id)) {
-            return ResponseEntity.badRequest()
-                    .body(new MessageResponse("El estudiante ya está matriculado en este curso"));
-        }
-
-        UserCourse uc = new UserCourse();
-        uc.setId(id);
-        uc.setUser(student);
-        uc.setCourse(course);
-        uc.setPaymentStatus(PaymentStatus.PAID); // o PENDING si lo decides
-
-        userCourseRepository.save(uc);
-
-        return ResponseEntity.ok(
-                new MessageResponse("Curso asignado correctamente al estudiante")
-        );
-    }
-
-
-    // Eliminar Usuario (Borrado lógico)
+    //Eliminar Usuario (Borrado lógico)
     @DeleteMapping("/{id}")
     public ResponseEntity<?> deleteUser(@PathVariable Long id) {
         User user = userRepository.findById(id)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
+                .orElseThrow(() -> new RuntimeException("Usuario no encontrado"));
 
+        // CORRECCIÓN: No borramos, solo desactivamos.
+        // Esto impide el login inmediatamente gracias a Spring Security.
         user.setEnabled(false);
         userRepository.save(user);
 

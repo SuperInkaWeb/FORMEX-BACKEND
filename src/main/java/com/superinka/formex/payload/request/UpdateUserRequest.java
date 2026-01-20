@@ -11,6 +11,4 @@ public class UpdateUserRequest {
     private String email;
     private Set<String> roles;
     private Boolean enabled;
-    private Long courseId;
-// + getter y setter
 }
