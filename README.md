@@ -6,8 +6,8 @@ API RESTful para la plataforma educativa FORMEX, un LMS enfocado en cursos en vi
 
 ## Stack Tecnológico
 
-- **Lenguaje:** Java 21
-- **Framework:** Spring Boot 3.5.8
+- **Lenguaje:** Java 17
+- **Framework:** Spring Boot 3.2.x
 - **Base de Datos:** MySQL 8.0
 - **Seguridad:** Spring Security + JWT (JSON Web Tokens)
 - **ORM:** Hibernate / Spring Data JPA
@@ -20,64 +20,44 @@ API RESTful para la plataforma educativa FORMEX, un LMS enfocado en cursos en vi
 
 ### Requisitos Previos
 
-- JDK 21 instalado
+- JDK 17 instalado
 - MySQL Server corriendo en el puerto 3306
 - Maven instalado
 
 ### Paso 1: Base de Datos
 
-**Importante:** Debes ejecutar el script SQL que se encuentra en la raíz del proyecto para crear la base de datos y las tablas necesarias.
-
-```bash
-mysql -u tu_usuario -p < formex_db.sql
-```
-
-O también puedes ejecutar el script directamente desde MySQL:
+Crear una base de datos vacía llamada `formex_db`:
 
 ```sql
-source /ruta/al/proyecto/formex_db. sql;
+CREATE DATABASE formex_db;
 ```
 
-Este script creará: 
-- La base de datos `formex_db`
-- Todas las tablas necesarias (users, roles, courses, categories, etc.)
-- Los roles predeterminados (ROLE_ADMIN, ROLE_STUDENT, ROLE_INSTRUCTOR)
-- Las categorías iniciales
+El backend está configurado en modo `update`, por lo que creará las tablas automáticamente al iniciar. 
 
 ### Paso 2: Configuración
 
-Actualizar `src/main/resources/application.properties` con tus credenciales:  
+Actualizar `src/main/resources/application.properties` con tus credenciales: 
 
 ```properties
 spring.datasource.url=jdbc:mysql://localhost:3306/formex_db
 spring.datasource.username=tu_usuario
-spring.datasource. password=tu_password
+spring.datasource.password=tu_password
 
 # Configuración de Email (Gmail)
 spring.mail.username=tu_email@gmail.com
-spring. mail.password=tu_app_password
+spring.mail.password=tu_app_password
 ```
 
-### Paso 3: Descomentar DataInitializr
-
-**Importante:** La clase `DataInitializr` está comentada por defecto.  Debes descomentarla para que se cree automáticamente el usuario administrador al iniciar la aplicación.
-
-1. Localiza el archivo `DataInitializr. java` en el proyecto
-2. Descomenta la anotación `@Component` y todo el código de la clase
-3. Guarda los cambios
-
-Esta clase creará automáticamente un usuario ADMIN al iniciar la aplicación: 
-
-- **Email:** admin@formex.com
-- **Password:** admin123
-
-### Paso 4: Ejecutar
+### Paso 3: Ejecutar
 
 ```bash
 mvn spring-boot:run
 ```
 
-Al primer inicio, después de haber descomentado `DataInitializr`, el sistema creará automáticamente el usuario administrador. 
+**Nota:** Al primer inicio, el sistema crea automáticamente un usuario ADMIN:
+
+- **Email:** admin@formex.com
+- **Password:** admin123
 
 ---
 
@@ -125,7 +105,7 @@ Al primer inicio, después de haber descomentado `DataInitializr`, el sistema cr
 ## Funcionalidades Implementadas ✅
 
 - ✅ Autenticación completa con JWT
-- ✅ Sistema de roles:  ADMIN, INSTRUCTOR, STUDENT
+- ✅ Sistema de roles: ADMIN, INSTRUCTOR, STUDENT
 - ✅ Recuperación de contraseña vía Email
 - ✅ Gestión de usuarios (CRUD con Soft Delete)
 - ✅ Gestión de cursos (CRUD completo)
@@ -150,8 +130,8 @@ Al primer inicio, después de haber descomentado `DataInitializr`, el sistema cr
 ## Notas Técnicas Importantes
 
 - **Imágenes:** Actualmente se guardan en `./uploads`. Para producción, migrar a AWS S3 o Cloudinary
-- **CORS:** Configurado para `localhost:5173`. Actualizar en `SecurityConfig. java` para otros dominios
-- **Seguridad:** El endpoint `/error` está abierto para depuración.  Cerrar en producción
+- **CORS:** Configurado para `localhost:5173`. Actualizar en `SecurityConfig.java` para otros dominios
+- **Seguridad:** El endpoint `/error` está abierto para depuración. Cerrar en producción
 
 ---
 
@@ -163,6 +143,6 @@ Al primer inicio, después de haber descomentado `DataInitializr`, el sistema cr
 
 ## 📧 Contacto
 
-**Email:** faridlazo1921@gmail. com
+**Email:** faridlazo1921@gmail.com
 
 ---

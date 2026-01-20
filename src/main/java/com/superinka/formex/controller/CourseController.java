@@ -3,17 +3,26 @@ package com.superinka.formex.controller;
 import com.superinka.formex.model.Category;
 import com.superinka.formex.model.Course;
 import com.superinka.formex.model.User;
+import com.superinka.formex.model.enums.PaymentStatus;
 import com.superinka.formex.payload.request.CourseRequest;
 import com.superinka.formex.payload.response.MessageResponse;
+import com.superinka.formex.payload.response.StudentDto;
 import com.superinka.formex.repository.CategoryRepository;
 import com.superinka.formex.repository.CourseRepository;
 import com.superinka.formex.repository.UserRepository;
+import com.superinka.formex.service.SessionStudentService;
 import com.superinka.formex.service.impl.UserDetailsImpl;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
+import com.superinka.formex.model.UserCourse;
+import com.superinka.formex.model.UserCourseId;
+import com.superinka.formex.payload.request.UpdatePaymentStatusRequest;
+import com.superinka.formex.repository.UserCourseRepository;
 
 import java.util.List;
 
@@ -26,7 +35,8 @@ public class CourseController {
     private final CourseRepository courseRepository;
     private final CategoryRepository categoryRepository;
     private final UserRepository userRepository;
-
+    private final UserCourseRepository userCourseRepository;
+    private final SessionStudentService sessionStudentService;
     //Listado de categorias(publico)
     @GetMapping("/public/categories")
     public List<Category> getAllCategories(){
@@ -51,15 +61,39 @@ public class CourseController {
 
         return ResponseEntity.ok(course);
     }
-
-    //Dashboard INSTRUCTOR (Ver mis cursos)
-    @GetMapping("/instructor/courses")
-    @PreAuthorize("hasRole('INSTRUCTOR') or hasRole ('ADMIN')")
-    public List<Course> getInstructorCourses() {
-        UserDetailsImpl userDetails = (UserDetailsImpl) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
-        return courseRepository.findByInstructorIdAndEnabledTrue(userDetails.getId());
+    @GetMapping("/courses/{courseId}/students")
+    @PreAuthorize("hasRole('ADMIN') or hasRole('INSTRUCTOR')")
+    public ResponseEntity<?> getStudentsByCourse(@PathVariable Long courseId) {
+        List<StudentDto> students = sessionStudentService.getStudentsForCourse(courseId);
+        return ResponseEntity.ok(students);
     }
 
+
+    // Dashboard INSTRUCTOR → ver sus cursos
+    @GetMapping("/instructor/courses")
+    @PreAuthorize("hasRole('INSTRUCTOR') or hasRole('ADMIN')")
+    public List<Course> getInstructorCourses(@AuthenticationPrincipal Jwt jwt) {
+        String auth0Id = jwt.getClaimAsString("sub");
+
+        User instructor = userRepository.findByAuth0Id(auth0Id)
+                .orElseThrow(() -> new RuntimeException("Instructor no encontrado"));
+
+        return courseRepository.findByInstructor_Id(instructor.getId());
+    }
+
+    // 👨‍🏫 Dashboard DOCENTE → ver solo sus cursos
+    @GetMapping("/instructor/mis-cursos")
+    @PreAuthorize("hasRole('INSTRUCTOR')")
+    public List<Course> misCursos() {
+
+        UserDetailsImpl userDetails =
+                (UserDetailsImpl) SecurityContextHolder
+                        .getContext()
+                        .getAuthentication()
+                        .getPrincipal();
+
+        return courseRepository.findByInstructor_Id(userDetails.getId());
+    }
     //Asignar Docente a Curso (Solo admin)
     @PutMapping ("courses/{id}/assign-instructor/{instructorId}")
     @PreAuthorize("hasRole('ADMIN')")
@@ -142,4 +176,42 @@ public class CourseController {
 
         return ResponseEntity.ok(new MessageResponse("Curso eliminado (desactivado) exitosamente"));
     }
+
+    @PutMapping("/courses/{courseId}/payments")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<?> updatePayments(
+            @PathVariable Long courseId,
+            @RequestBody List<UpdatePaymentStatusRequest> payments
+    ) {
+        Course course = courseRepository.findById(courseId)
+                .orElseThrow(() -> new RuntimeException("Curso no encontrado"));
+
+        for (UpdatePaymentStatusRequest p : payments) {
+
+            User user = userRepository.findById(p.getStudentId())
+                    .orElseThrow(() -> new RuntimeException("Usuario no encontrado"));
+
+            UserCourseId id = new UserCourseId();
+            id.setUserId(user.getId());
+            id.setCourseId(course.getId());
+
+            UserCourse uc = userCourseRepository.findById(id)
+                    .orElseGet(() -> {
+                        UserCourse newUc = new UserCourse();
+                        newUc.setId(id);
+                        newUc.setUser(user);
+                        newUc.setCourse(course);
+                        newUc.setPaymentStatus(PaymentStatus.PENDING);
+                        return newUc;
+                    });
+
+            uc.setPaymentStatus(p.getPaymentStatus());
+            userCourseRepository.save(uc);
+        }
+
+        return ResponseEntity.ok(
+                new MessageResponse("Estados de pago actualizados correctamente")
+        );
+    }
+
 }
