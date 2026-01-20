@@ -4,10 +4,7 @@ import jakarta.persistence.*;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
+import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
@@ -27,7 +24,7 @@ public class User {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+    private Long id;   // 🔥 Este ID es el que debe coincidir con attendance_records.user_id
 
     @NotBlank
     @Size(max = 100)
@@ -36,10 +33,9 @@ public class User {
 
     @NotBlank
     @Size(max = 100)
-    @Email
-    private String email;
+    private String email; // ahora es IDENTIFICADOR, no solo correo
 
-    @NotBlank
+    @Column(nullable = true)
     @Size(max = 255)
     private String password;
 
@@ -52,12 +48,18 @@ public class User {
     @Builder.Default
     private Boolean enabled = true;
 
+    @Column(name = "auth0_id", unique = true)
+    private String auth0Id;
+
+
     @ManyToMany(fetch = FetchType.EAGER)
     @JoinTable(
             name = "user_roles",
             joinColumns = @JoinColumn(name = "user_id"),
             inverseJoinColumns = @JoinColumn(name = "role_id")
     )
+    @EqualsAndHashCode.Exclude
+    @ToString.Exclude
     private Set<Role> roles = new HashSet<>();
 
     @CreationTimestamp
