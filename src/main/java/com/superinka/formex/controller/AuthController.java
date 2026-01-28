@@ -10,9 +10,11 @@ import com.superinka.formex.payload.response.MessageResponse;
 import com.superinka.formex.repository.PasswordResetTokenRepository;
 import com.superinka.formex.repository.RoleRepository;
 import com.superinka.formex.repository.UserRepository;
+import com.superinka.formex.service.Auth0Service;
 import com.superinka.formex.service.EmailService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -21,6 +23,7 @@ import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 @CrossOrigin(origins = "*", maxAge = 3600)
 @RestController
@@ -30,101 +33,183 @@ public class AuthController {
 
     private final UserRepository userRepository;
     private final RoleRepository roleRepository;
+    private final PasswordEncoder encoder;
     private final EmailService emailService;
     private final PasswordResetTokenRepository tokenRepository;
-    private final PasswordEncoder encoder;
+    private final Auth0Service auth0Service;
 
-    //Registro
-    @PostMapping("/register")
+    /**
+     * NOTA: El login ahora se maneja vía Auth0 OAuth2
+     * Este endpoint está deshabilitado. Los usuarios deben usar Auth0 Universal Login.
+     * Para testing local, usar Auth0 Management API o el endpoint de signup.
+     */
+    @PostMapping("/signin")
+    public ResponseEntity<?> authenticateUser(@Valid @RequestBody LoginRequest loginRequest) {
+        return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).body(
+                new MessageResponse("Login debe realizarse a través de Auth0 OAuth2. Por favor usa Auth0 Universal Login.")
+        );
+    }
+
+    /**
+     * Registro de usuario nuevo (sincroniza con Auth0 y BD local)
+     * POST /auth/signup
+     */
+    @PostMapping("/signup")
     public ResponseEntity<?> registerUser(@Valid @RequestBody SignupRequest signUpRequest) {
-
-        // 1. Validar duplicados
+        // Validar que el email no esté registrado localmente
         if (userRepository.existsByEmail(signUpRequest.getEmail())) {
             return ResponseEntity
-                    .badRequest()
-                    .body(new MessageResponse("Error: El email ya está en uso!"));
+                    .status(HttpStatus.BAD_REQUEST)
+                    .body(new MessageResponse("Error: El email ya está registrado!"));
         }
 
-        // 2. Crear nuevo usuario (con Password Encoder)
-        User user = User.builder()
-                .fullName(signUpRequest.getFullName())
-                .email(signUpRequest.getEmail())
-                .password(encoder.encode(signUpRequest.getPassword()))
-                .phone(signUpRequest.getPhone())
-                .enabled(true)
-                .build();
+        try {
+            // 1. Separar nombre completo en nombre y apellido
+            String[] names = signUpRequest.getFullName().trim().split(" ", 2);
+            String firstName = names[0];
+            String lastName = names.length > 1 ? names[1] : "";
 
-        // 3. Asignar Roles
-        Set<String> strRoles = signUpRequest.getRole();
-        Set<Role> roles = new HashSet<>();
+            // 2. Crear usuario en BD local
+            User user = new User(
+                    firstName,
+                    lastName,
+                    signUpRequest.getEmail(),
+                    encoder.encode(signUpRequest.getPassword())
+            );
 
-        if (strRoles == null) {
-            // Por defecto: ROL ESTUDIANTE
-            Role userRole = roleRepository.findByName(RoleName.ROLE_STUDENT)
-                    .orElseThrow(() -> new RuntimeException("Error: Rol no encontrado."));
-            roles.add(userRole);
-        } else {
-            // Lógica para asignar otros roles si se envían (útil para admins creando usuarios)
-            strRoles.forEach(role -> {
-                switch (role) {
-                    case "admin":
-                        Role adminRole = roleRepository.findByName(RoleName.ROLE_ADMIN)
-                                .orElseThrow(() -> new RuntimeException("Error: Rol no encontrado."));
-                        roles.add(adminRole);
-                        break;
-                    case "instructor":
-                        Role modRole = roleRepository.findByName(RoleName.ROLE_INSTRUCTOR)
-                                .orElseThrow(() -> new RuntimeException("Error: Rol no encontrado."));
-                        roles.add(modRole);
-                        break;
-                    default:
-                        Role userRole = roleRepository.findByName(RoleName.ROLE_STUDENT)
-                                .orElseThrow(() -> new RuntimeException("Error: Rol no encontrado."));
-                        roles.add(userRole);
-                }
-            });
+            user.setPhone(signUpRequest.getPhone());
+
+            // 3. Asignar rol (por defecto STUDENT)
+            Set<String> strRoles = signUpRequest.getRole();
+            Set<Role> roles = new HashSet<>();
+            AtomicReference<String> mainRoleName = new AtomicReference<>(RoleName.ROLE_STUDENT.name());
+
+            if (strRoles == null || strRoles.isEmpty()) {
+                Role userRole = roleRepository.findByName(RoleName.ROLE_STUDENT)
+                        .orElseThrow(() -> new RuntimeException("Error: Rol STUDENT no encontrado."));
+                roles.add(userRole);
+            } else {
+                strRoles.forEach(role -> {
+                    switch (role.toLowerCase()) {
+                        case "admin":
+                            Role adminRole = roleRepository.findByName(RoleName.ROLE_ADMIN)
+                                    .orElseThrow(() -> new RuntimeException("Error: Rol ADMIN no encontrado."));
+                            roles.add(adminRole);
+                            mainRoleName.set(RoleName.ROLE_ADMIN.name());
+                            break;
+                        case "instructor":
+                            Role instructorRole = roleRepository.findByName(RoleName.ROLE_INSTRUCTOR)
+                                    .orElseThrow(() -> new RuntimeException("Error: Rol INSTRUCTOR no encontrado."));
+                            roles.add(instructorRole);
+                            mainRoleName.set(RoleName.ROLE_INSTRUCTOR.name());
+                            break;
+                        default:
+                            Role studentRole = roleRepository.findByName(RoleName.ROLE_STUDENT)
+                                    .orElseThrow(() -> new RuntimeException("Error: Rol STUDENT no encontrado."));
+                            roles.add(studentRole);
+                    }
+                });
+            }
+
+            user.setRoles(roles);
+            user.setEnabled(true);
+            userRepository.save(user);
+
+            // 4. Sincronizar con Auth0
+            try {
+                auth0Service.createAuth0User(
+                        signUpRequest.getEmail(),
+                        signUpRequest.getPassword(),
+                        signUpRequest.getFullName(),
+                        mainRoleName.get()
+                );
+            } catch (Exception e) {
+                // Log pero no fallar. El usuario podría ya existir en Auth0
+                System.err.println("Advertencia: No se pudo crear usuario en Auth0: " + e.getMessage());
+            }
+
+            // 5. Enviar correo de bienvenida
+            try {
+                emailService.sendWelcomeEmail(user.getEmail(), user.getName());
+            } catch (Exception e) {
+                System.err.println("Advertencia: No se pudo enviar correo de bienvenida: " + e.getMessage());
+            }
+
+            return ResponseEntity.status(HttpStatus.CREATED)
+                    .body(new MessageResponse("Usuario registrado exitosamente! Por favor inicia sesión con Auth0."));
+
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(new MessageResponse("Error al registrar usuario: " + e.getMessage()));
         }
-
-        user.setRoles(roles);
-        userRepository.save(user);
-
-        // Entregable 1.03: Enviar Email de Bienvenida
-        emailService.sendWelcomeEmail(user.getEmail(), user.getFullName());
-
-        return ResponseEntity.ok(new MessageResponse("Usuario registrado exitosamente!"));
     }
 
-    //Recuperacion de Contraseña
+    /**
+     * Solicitar recuperación de contraseña
+     * POST /auth/forgot-password
+     * Body: { "email": "user@example.com" }
+     */
     @PostMapping("/forgot-password")
-    public ResponseEntity<?> forgotPasswordResponseEntity(@RequestBody LoginRequest request) {
-        User user = userRepository.findByEmail(request.getEmail())
-                .orElseThrow(() -> new RuntimeException("Usuario no encontrado"));
+    public ResponseEntity<?> forgotPassword(@RequestBody LoginRequest request) {
+        try {
+            // Buscar usuario por email
+            User user = userRepository.findByEmail(request.getEmail())
+                    .orElseThrow(() -> new RuntimeException("Usuario no encontrado"));
 
-        String token = UUID.randomUUID().toString();
-        PasswordResetToken myToken = new PasswordResetToken(token, user);
-        tokenRepository.save(myToken);
+            // Crear token temporal
+            String token = UUID.randomUUID().toString();
+            PasswordResetToken resetToken = new PasswordResetToken(token, user);
+            tokenRepository.save(resetToken);
 
-        emailService.sendPasswordResetEmail(user.getEmail(), token);
-        return ResponseEntity.ok(new MessageResponse("Correo de recuperacion enviado!"));
+            // Enviar email
+            emailService.sendPasswordResetEmail(user.getEmail(), token);
+
+            return ResponseEntity.ok(new MessageResponse("Correo de recuperación enviado exitosamente!"));
+
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(new MessageResponse("Usuario no encontrado"));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(new MessageResponse("Error al procesar solicitud: " + e.getMessage()));
+        }
     }
 
-    //Cambiar la contraseña con el token
+    /**
+     * Restablecer contraseña con token
+     * POST /auth/reset-password?token=xxxxx
+     * Body: { "password": "newPassword" }
+     */
     @PostMapping("/reset-password")
     public ResponseEntity<?> resetPassword(@RequestParam String token, @RequestBody LoginRequest request) {
-        PasswordResetToken resetToken = tokenRepository.findByToken(token)
-                .orElseThrow(() -> new RuntimeException("Token invalido"));
+        try {
+            // Validar token
+            PasswordResetToken resetToken = tokenRepository.findByToken(token)
+                    .orElseThrow(() -> new RuntimeException("Token inválido"));
 
-        if(resetToken.getExpiryDate().isBefore(LocalDateTime.now())) {
-            return ResponseEntity.badRequest().body(new MessageResponse("El token ha expirado"));
+            // Validar expiración
+            if (resetToken.getExpiryDate().isBefore(LocalDateTime.now())) {
+                tokenRepository.delete(resetToken);
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                        .body(new MessageResponse("El token ha expirado"));
+            }
+
+            // Actualizar contraseña
+            User user = resetToken.getUser();
+            user.setPassword(encoder.encode(request.getPassword()));
+            userRepository.save(user);
+
+            // Eliminar token usado
+            tokenRepository.delete(resetToken);
+
+            return ResponseEntity.ok(new MessageResponse("Contraseña restablecida exitosamente!"));
+
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(new MessageResponse("Token inválido: " + e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(new MessageResponse("Error al restablecer contraseña: " + e.getMessage()));
         }
-
-        User user = resetToken.getUser();
-        user.setPassword(encoder.encode(request.getPassword()));
-        userRepository.save(user);
-
-        //Borrar token usado
-        tokenRepository.delete(resetToken);
-
-        return ResponseEntity.ok(new MessageResponse("Contraseña restablecida exitosamente!"));
     }
 }

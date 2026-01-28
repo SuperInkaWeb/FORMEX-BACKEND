@@ -3,10 +3,13 @@ package com.superinka.formex.config;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.Customizer;
+import org.springframework.core.annotation.Order;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
@@ -23,70 +26,93 @@ import org.springframework.security.oauth2.server.resource.authentication.JwtGra
 @EnableMethodSecurity
 public class SecurityConfig {
 
-    @Bean
-    SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+        @Value("${auth0.audience}")
+        private String audience;
 
-        http
-                .cors(Customizer.withDefaults())
-                .csrf(csrf -> csrf.disable())
+        @Value("${spring.security.oauth2.resourceserver.jwt.issuer-uri}")
+        private String issuer;
 
-                .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/me").authenticated()
-                        .requestMatchers("/api/payments/stripe/webhook").permitAll()
-                        .anyRequest().permitAll()
-                )
+        @Bean
+        public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+                http
+                        .csrf(csrf -> csrf.disable())
+                        .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+                        .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                        .authorizeHttpRequests(auth -> auth
+                                .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
 
-                .oauth2ResourceServer(oauth2 ->
-                        oauth2.jwt(jwt ->
-                                jwt.jwtAuthenticationConverter(jwtAuthenticationConverter())
+                                // Rutas públicas y de error
+                                .requestMatchers("/api/public/**", "/auth/**", "/error").permitAll()
+                                .requestMatchers("/api/payments/stripe/webhook").permitAll()
+                                .requestMatchers("/images/**", "/uploads/**").permitAll()
+
+                                // Gestión de cursos
+                                .requestMatchers(HttpMethod.POST, "/api/courses").hasAnyRole("ADMIN", "INSTRUCTOR")
+                                .requestMatchers(HttpMethod.PUT, "/api/courses/**").hasAnyRole("ADMIN", "INSTRUCTOR")
+                                .requestMatchers(HttpMethod.DELETE, "/api/courses/**").hasRole("ADMIN")
+
+                                .anyRequest().authenticated()
                         )
-                );
+                        .oauth2ResourceServer(oauth2 -> oauth2
+                                .jwt(jwt -> jwt
+                                        .decoder(jwtDecoder())
+                                        .jwtAuthenticationConverter(jwtAuthenticationConverter())
+                                )
+                        );
 
-        return http.build();
-    }
+                return http.build();
+        }
 
-    @Bean
-    JwtDecoder jwtDecoder() {
+        @Bean
+        JwtDecoder jwtDecoder() {
+                NimbusJwtDecoder jwtDecoder = (NimbusJwtDecoder)
+                        JwtDecoders.fromOidcIssuerLocation(issuer);
 
-        String issuer = "https://dev-pdyaf2k048teshn7.us.auth0.com/";
-        String audience = "https://api.formex.com";
+                OAuth2TokenValidator<Jwt> audienceValidator = new AudienceValidator(audience);
+                OAuth2TokenValidator<Jwt> withIssuer = JwtValidators.createDefaultWithIssuer(issuer);
+                OAuth2TokenValidator<Jwt> withAudience = new DelegatingOAuth2TokenValidator<>(withIssuer, audienceValidator);
 
-        NimbusJwtDecoder decoder =
-                JwtDecoders.fromIssuerLocation(issuer);
+                jwtDecoder.setJwtValidator(withAudience);
 
-        OAuth2TokenValidator<Jwt> withIssuer =
-                JwtValidators.createDefaultWithIssuer(issuer);
+                return jwtDecoder;
+        }
 
-        OAuth2TokenValidator<Jwt> audienceValidator = jwt -> {
-            if (jwt.getAudience().contains(audience)) {
-                return OAuth2TokenValidatorResult.success();
-            }
-            return OAuth2TokenValidatorResult.failure(
-                    new OAuth2Error("invalid_token", "Invalid audience", null)
-            );
-        };
+        @Bean
+        public JwtAuthenticationConverter jwtAuthenticationConverter() {
+                JwtGrantedAuthoritiesConverter converter = new JwtGrantedAuthoritiesConverter();
+                converter.setAuthoritiesClaimName("https://formex.com/roles");
+                converter.setAuthorityPrefix("");
 
-        decoder.setJwtValidator(
-                new DelegatingOAuth2TokenValidator<>(withIssuer, audienceValidator)
-        );
+                JwtAuthenticationConverter jwtConverter = new JwtAuthenticationConverter();
+                jwtConverter.setJwtGrantedAuthoritiesConverter(converter);
+                return jwtConverter;
+        }
 
-        return decoder;
-    }
+        @Bean
+        public CorsConfigurationSource corsConfigurationSource() {
+                CorsConfiguration configuration = new CorsConfiguration();
+                configuration.setAllowedOriginPatterns(List.of("http://localhost:5173", "https://*.vercel.app"));
+                configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+                configuration.setAllowedHeaders(List.of("Authorization", "Cache-Control", "Content-Type"));
+                configuration.setAllowCredentials(true);
 
-    @Bean
-    JwtAuthenticationConverter jwtAuthenticationConverter() {
-        JwtGrantedAuthoritiesConverter authoritiesConverter = new JwtGrantedAuthoritiesConverter();
+                UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+                source.registerCorsConfiguration("/**", configuration);
+                return source;
+        }
 
-        authoritiesConverter.setAuthoritiesClaimName("https://formex.com/roles");
-        authoritiesConverter.setAuthorityPrefix(""); // 👈 sin prefijo extra
+        static class AudienceValidator implements OAuth2TokenValidator<Jwt> {
+                private final String audience;
 
-        JwtAuthenticationConverter jwtConverter = new JwtAuthenticationConverter();
-        jwtConverter.setJwtGrantedAuthoritiesConverter(authoritiesConverter);
+                AudienceValidator(String audience) {
+                        this.audience = audience;
+                }
 
-        return jwtConverter;
-    }
-
-
+                public OAuth2TokenValidatorResult validate(Jwt jwt) {
+                        if (jwt.getAudience().contains(audience)) {
+                                return OAuth2TokenValidatorResult.success();
+                        }
+                        return OAuth2TokenValidatorResult.failure(new OAuth2Error("invalid_token", "The required audience is missing", null));
+                }
+        }
 }
-
-

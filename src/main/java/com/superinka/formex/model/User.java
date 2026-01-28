@@ -24,16 +24,23 @@ public class User {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;   // 🔥 Este ID es el que debe coincidir con attendance_records.user_id
+    private Long id;
+
+    // CAMBIO: Separamos fullName en name y lastname para mejor gestión
+    // Si tu DB ya tiene datos en 'full_name', podrías necesitar una migración o mantenerlo
+    // Para este caso, adaptamos a lo que pide el controlador:
+
+    @NotBlank
+    @Size(max = 50)
+    private String name;
+
+    @NotBlank
+    @Size(max = 50)
+    private String lastname;
 
     @NotBlank
     @Size(max = 100)
-    @Column(name = "full_name")
-    private String fullName;
-
-    @NotBlank
-    @Size(max = 100)
-    private String email; // ahora es IDENTIFICADOR, no solo correo
+    private String email;
 
     @Column(nullable = true)
     @Size(max = 255)
@@ -51,22 +58,32 @@ public class User {
     @Column(name = "auth0_id", unique = true)
     private String auth0Id;
 
-
     @ManyToMany(fetch = FetchType.EAGER)
     @JoinTable(
             name = "user_roles",
             joinColumns = @JoinColumn(name = "user_id"),
             inverseJoinColumns = @JoinColumn(name = "role_id")
     )
-    @EqualsAndHashCode.Exclude
-    @ToString.Exclude
     private Set<Role> roles = new HashSet<>();
 
     @CreationTimestamp
-    @Column(name = "created_at", updatable = false)
+    @Column(updatable = false, name = "created_at")
     private LocalDateTime createdAt;
 
     @UpdateTimestamp
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
+
+    // Constructor específico usado por AdminUserController
+    public User(String name, String lastname, String email, String password) {
+        this.name = name;
+        this.lastname = lastname;
+        this.email = email;
+        this.password = password;
+    }
+
+    // Metodo helper para obtener nombre completo si lo necesitas en otras partes
+    public String getFullName() {
+        return this.name + " " + this.lastname;
+    }
 }

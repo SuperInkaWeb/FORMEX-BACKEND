@@ -12,6 +12,7 @@ import com.superinka.formex.repository.CourseRepository;
 import com.superinka.formex.repository.UserRepository;
 import com.superinka.formex.service.SessionStudentService;
 import com.superinka.formex.service.impl.UserDetailsImpl;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -32,151 +33,121 @@ import java.util.List;
 @RequiredArgsConstructor
 public class CourseController {
 
-    private final CourseRepository courseRepository;
     private final CategoryRepository categoryRepository;
+    private final CourseRepository courseRepository;
     private final UserRepository userRepository;
     private final UserCourseRepository userCourseRepository;
-    private final SessionStudentService sessionStudentService;
-    //Listado de categorias(publico)
-    @GetMapping("/public/categories")
-    public List<Category> getAllCategories(){
-        return categoryRepository.findAll();
-    }
+    private final SessionStudentService sessionStudentService; // 👈 Inyectamos el servicio
 
-    //Listado de cursos(publico)
+    // --- RUTAS PÚBLICAS ---
+
+    // Listar cursos habilitados (Público)
+    // URL: /api/public/courses
     @GetMapping("/public/courses")
     public List<Course> getAllCourses() {
         return courseRepository.findByEnabledTrue();
     }
 
-    //Detalle de curso
+    // Ver detalle de curso (Público)
+    // URL: /api/public/courses/{id}
     @GetMapping("/public/courses/{id}")
     public ResponseEntity<?> getCourseById(@PathVariable Long id) {
         Course course = courseRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Curso no encontrado con ID: " + id));
-
-        if (!course.getEnabled()) {
-            return ResponseEntity.badRequest().body(new MessageResponse("Este curso ya no está disponible."));
-        }
-
+                .orElseThrow(() -> new RuntimeException("Error: Course not found."));
         return ResponseEntity.ok(course);
     }
-    @GetMapping("/courses/{courseId}/students")
-    @PreAuthorize("hasRole('ADMIN') or hasRole('INSTRUCTOR')")
-    public ResponseEntity<?> getStudentsByCourse(@PathVariable Long courseId) {
-        List<StudentDto> students = sessionStudentService.getStudentsForCourse(courseId);
-        return ResponseEntity.ok(students);
+
+    // Listar categorías (Público)
+    // URL: /api/public/categories
+    @GetMapping("/public/categories")
+    public List<Category> getAllCategories() {
+        return categoryRepository.findAll();
     }
 
+    // --- RUTAS PROTEGIDAS (ADMIN/INSTRUCTOR) ---
 
-    // Dashboard INSTRUCTOR → ver sus cursos
-    @GetMapping("/instructor/courses")
-    @PreAuthorize("hasRole('INSTRUCTOR') or hasRole('ADMIN')")
-    public List<Course> getInstructorCourses(@AuthenticationPrincipal Jwt jwt) {
-        String auth0Id = jwt.getClaimAsString("sub");
+    // Crear Curso
+    // URL: /api/courses
+    @PostMapping("/courses")
+    @PreAuthorize("hasAnyRole('ADMIN', 'INSTRUCTOR')")
+    public ResponseEntity<?> createCourse(@Valid @RequestBody CourseRequest courseRequest,
+                                          @AuthenticationPrincipal Jwt jwt) {
+        String auth0Id = jwt.getSubject();
 
         User instructor = userRepository.findByAuth0Id(auth0Id)
-                .orElseThrow(() -> new RuntimeException("Instructor no encontrado"));
+                .orElseThrow(() -> new RuntimeException("Error: Instructor no encontrado en BD local."));
 
-        return courseRepository.findByInstructor_Id(instructor.getId());
-    }
+        Category category = categoryRepository.findById(courseRequest.getCategoryId())
+                .orElseThrow(() -> new RuntimeException("Error: Category not found."));
 
-    // 👨‍🏫 Dashboard DOCENTE → ver solo sus cursos
-    @GetMapping("/instructor/mis-cursos")
-    @PreAuthorize("hasRole('INSTRUCTOR')")
-    public List<Course> misCursos() {
+        Course course = new Course();
+        course.setTitle(courseRequest.getTitle());
+        course.setDescription(courseRequest.getDescription());
+        course.setPrice(courseRequest.getPrice());
+        course.setLevel(courseRequest.getLevel());
+        course.setImageUrl(courseRequest.getImageUrl());
 
-        UserDetailsImpl userDetails =
-                (UserDetailsImpl) SecurityContextHolder
-                        .getContext()
-                        .getAuthentication()
-                        .getPrincipal();
-
-        return courseRepository.findByInstructor_Id(userDetails.getId());
-    }
-    //Asignar Docente a Curso (Solo admin)
-    @PutMapping ("courses/{id}/assign-instructor/{instructorId}")
-    @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<?> assignInstructor(@PathVariable Long id, @PathVariable Long instructorId) {
-        Course course = courseRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Curso no encontrado"));
-
-        User instructor = userRepository.findById(instructorId)
-                .orElseThrow(() -> new RuntimeException("Instructor no encontrado"));
-
-        //Validar que sea realmente un instructor
-        boolean isInstructor = instructor.getRoles().stream()
-                .anyMatch(role -> role.getName().name().equals("ROLE_INSTRUCTOR"));
-
-        if(!isInstructor) {
-            return ResponseEntity.badRequest().body(new MessageResponse("El usuario no tiene rol de Instructor"));
-        }
+        course.setCategory(category);
         course.setInstructor(instructor);
+        course.setEnabled(true);
+
         courseRepository.save(course);
 
-        return ResponseEntity.ok(new MessageResponse("Instructor asignado correctamente: " + instructor.getFullName()));
-    }
-
-
-    //Crear Curso (Solo admin o instructor)
-    @PostMapping("/courses")
-    @PreAuthorize("hasRole('ADMIN') or hasRole('INSTRUCTOR')")
-    public ResponseEntity<?> createCourse(@RequestBody CourseRequest request) {
-
-        UserDetailsImpl userDetails = (UserDetailsImpl) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
-        User instructor = userRepository.findById(userDetails.getId()).orElseThrow();
-
-        Category category = categoryRepository.findById(request.getCategoryId())
-                .orElseThrow(() -> new RuntimeException("Categoria no encontrada"));
-
-        Course course = Course.builder()
-                .title(request.getTitle())
-                .description(request.getDescription())
-                .price(request.getPrice())
-                .level(request.getLevel())
-                .imageUrl(request.getImageUrl())
-                .category(category)
-                .instructor(instructor)
-                .build();
-        courseRepository.save(course);
-
-        return ResponseEntity.ok(new MessageResponse("Curso creado exitosamente"));
+        return ResponseEntity.ok(new MessageResponse("Curso creado exitosamente!"));
     }
 
     // Editar Curso
     @PutMapping("/courses/{id}")
-    @PreAuthorize("hasRole('ADMIN') or hasRole('INSTRUCTOR')")
-    public ResponseEntity<?> updateCourse(@PathVariable Long id, @RequestBody CourseRequest request) {
+    @PreAuthorize("hasAnyRole('ADMIN', 'INSTRUCTOR')")
+    public ResponseEntity<?> updateCourse(@PathVariable Long id, @RequestBody CourseRequest courseRequest) {
         Course course = courseRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Curso no encontrado"));
+                .orElseThrow(() -> new RuntimeException("Error: Course not found."));
 
-        Category category = categoryRepository.findById(request.getCategoryId())
-                .orElseThrow(() -> new RuntimeException("Categoría no encontrada"));
+        course.setTitle(courseRequest.getTitle());
+        course.setDescription(courseRequest.getDescription());
+        course.setPrice(courseRequest.getPrice());
+        course.setLevel(courseRequest.getLevel());
+        course.setImageUrl(courseRequest.getImageUrl());
 
-        course.setTitle(request.getTitle());
-        course.setDescription(request.getDescription());
-        course.setPrice(request.getPrice());
-        course.setLevel(request.getLevel());
-        course.setImageUrl(request.getImageUrl());
-        course.setCategory(category);
+        if (courseRequest.getCategoryId() != null) {
+            Category category = categoryRepository.findById(courseRequest.getCategoryId())
+                    .orElseThrow(() -> new RuntimeException("Error: Category not found."));
+            course.setCategory(category);
+        }
 
         courseRepository.save(course);
-        return ResponseEntity.ok(new MessageResponse("Curso actualizado exitosamente"));
+        return ResponseEntity.ok(new MessageResponse("Curso actualizado exitosamente!"));
     }
 
-    // Eliminar Curso (NUEVO)
+    // Eliminar Curso (Soft Delete)
     @DeleteMapping("/courses/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<?> deleteCourse(@PathVariable Long id) {
         Course course = courseRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Curso no encontrado"));
+                .orElseThrow(() -> new RuntimeException("Error: Course not found."));
 
         course.setEnabled(false);
         courseRepository.save(course);
 
-        return ResponseEntity.ok(new MessageResponse("Curso eliminado (desactivado) exitosamente"));
+        return ResponseEntity.ok(new MessageResponse("Curso eliminado exitosamente"));
     }
 
+    // 🔥 NUEVO ENDPOINT: Listar Alumnos Inscritos en un Curso
+    // URL: /api/courses/{courseId}/students
+    @GetMapping("/courses/{courseId}/students")
+    @PreAuthorize("hasAnyRole('ADMIN', 'INSTRUCTOR')")
+    public ResponseEntity<List<StudentDto>> getCourseStudents(@PathVariable Long courseId) {
+        if (!courseRepository.existsById(courseId)) {
+            throw new RuntimeException("Error: Course not found.");
+        }
+        // Usamos el servicio que ya tiene la lógica de mapeo
+        List<StudentDto> students = sessionStudentService.getStudentsForCourse(courseId);
+
+        // Si no hay alumnos, devuelve lista vacía [] con estado 200 OK (no error 404)
+        return ResponseEntity.ok(students);
+    }
+
+    // Actualizar estados de pago
     @PutMapping("/courses/{courseId}/payments")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<?> updatePayments(
@@ -187,7 +158,6 @@ public class CourseController {
                 .orElseThrow(() -> new RuntimeException("Curso no encontrado"));
 
         for (UpdatePaymentStatusRequest p : payments) {
-
             User user = userRepository.findById(p.getStudentId())
                     .orElseThrow(() -> new RuntimeException("Usuario no encontrado"));
 
@@ -209,9 +179,6 @@ public class CourseController {
             userCourseRepository.save(uc);
         }
 
-        return ResponseEntity.ok(
-                new MessageResponse("Estados de pago actualizados correctamente")
-        );
+        return ResponseEntity.ok(new MessageResponse("Estados de pago actualizados correctamente"));
     }
-
 }

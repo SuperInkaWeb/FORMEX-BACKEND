@@ -25,76 +25,79 @@ public class UserController {
 
     @GetMapping("/api/me")
     public User me(@AuthenticationPrincipal Jwt jwt) {
-
         String auth0Id = jwt.getSubject();
-        String email = jwt.getClaimAsString("email");
+        String email = getClaim(jwt, "email");
 
-        User user = userRepository.findByAuth0Id(auth0Id)
-                .orElseGet(() -> crearUsuarioDesdeAuth0(jwt, auth0Id, email));
-
-
-        List<String> roleClaims =
-                jwt.getClaimAsStringList("https://formex.com/roles");
-
-        if (roleClaims != null) {
-            Set<Role> roles = roleClaims.stream()
-                    .map(r -> r.startsWith("ROLE_") ? r : "ROLE_" + r.toUpperCase())
-                    .map(RoleName::valueOf)
-                    .map(rn -> roleRepository.findByName(rn)
-                            .orElseThrow(() ->
-                                    new RuntimeException("Role " + rn + " no existe")))
-                    .collect(Collectors.toSet());
-
-            user.setRoles(roles);
-            userRepository.save(user);
+        // 1. Buscar por Auth0 ID (Ideal)
+        Optional<User> userByAuth0Id = userRepository.findByAuth0Id(auth0Id);
+        if (userByAuth0Id.isPresent()) {
+            return userByAuth0Id.get();
         }
 
-        return user;
-    }
+        // 2. Si no existe por ID, buscar por Email (Caso de migración o admin pre-creado)
+        if (email != null) {
+            Optional<User> userByEmail = userRepository.findByEmail(email);
+            if (userByEmail.isPresent()) {
+                // ¡ENCONTRADO! Actualizamos su auth0_id para vincularlo
+                User existingUser = userByEmail.get();
+                existingUser.setAuth0Id(auth0Id);
+                // Opcional: Actualizar foto si viene nueva
+                String picture = getClaim(jwt, "picture");
+                if (picture != null) existingUser.setAvatarUrl(picture);
 
-    /* =======================
-       MÉTODOS PRIVADOS
-       ======================= */
-
-    // ✅ MÉTODO ROBUSTO (NO FALLA SI NO HAY EMAIL)
-    private String extractIdentifier(Jwt jwt) {
-        String email = jwt.getClaimAsString("email");
-        if (email != null && !email.isBlank()) {
-            return email.toLowerCase();
+                return userRepository.save(existingUser);
+            }
         }
 
-        String username = jwt.getClaimAsString("preferred_username");
-        if (username != null && !username.isBlank()) {
-            return username;
-        }
-
-        String sub = jwt.getSubject();
-        if (sub != null && !sub.isBlank()) {
-            return sub;
-        }
-
-        throw new IllegalStateException("JWT sin identificador válido");
-    }
-
-    private String extractFullName(Jwt jwt) {
-        return Optional.ofNullable(jwt.getClaimAsString("name"))
-                .or(() -> Optional.ofNullable(jwt.getClaimAsString("nickname")))
-                .or(() -> Optional.ofNullable(jwt.getClaimAsString("preferred_username")))
-                .orElse("Usuario");
+        // 3. Si no existe ni por ID ni por Email, crear nuevo
+        return crearUsuarioDesdeAuth0(jwt, auth0Id, email);
     }
 
     private User crearUsuarioDesdeAuth0(Jwt jwt, String auth0Id, String email) {
         Role studentRole = roleRepository.findByName(RoleName.ROLE_STUDENT)
                 .orElseThrow(() -> new RuntimeException("ROLE_STUDENT no existe"));
 
+        String firstName = getClaim(jwt, "given_name");
+        String lastName = getClaim(jwt, "family_name");
+        String fullName = getClaim(jwt, "name");
+        String picture = getClaim(jwt, "picture");
+
+        if (firstName == null || lastName == null) {
+            if (fullName != null && !fullName.isBlank()) {
+                String[] parts = fullName.trim().split(" ", 2);
+                if (firstName == null) firstName = parts[0];
+                if (lastName == null && parts.length > 1) lastName = parts[1];
+            }
+            if (firstName == null && email != null && fullName != null && fullName.equals(email)) {
+                String nickname = getClaim(jwt, "nickname");
+                if (nickname != null) firstName = nickname;
+            }
+        }
+
+        if (firstName == null || firstName.isBlank()) firstName = "Usuario";
+        if (lastName == null || lastName.isBlank()) lastName = ".";
+
         User user = User.builder()
-                .auth0Id(auth0Id) // 🔑 identificador único
-                .email(email != null ? email.toLowerCase() : auth0Id) // 📧 opcional
-                .fullName(extractFullName(jwt))
+                .auth0Id(auth0Id)
+                .email(email != null ? email : auth0Id)
+                .name(firstName)
+                .lastname(lastName)
+                .avatarUrl(picture)
                 .enabled(true)
                 .roles(Set.of(studentRole))
                 .build();
 
         return userRepository.save(user);
+    }
+
+    private String getClaim(Jwt jwt, String claimName) {
+        if (jwt.hasClaim(claimName)) {
+            return jwt.getClaimAsString(claimName);
+        }
+        String customKey = "https://formex.com/" + claimName;
+        if (jwt.hasClaim(customKey)) {
+            return jwt.getClaimAsString(customKey);
+        }
+        return null;
     }
 }

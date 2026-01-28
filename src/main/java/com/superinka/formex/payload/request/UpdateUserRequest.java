@@ -6,11 +6,18 @@ import java.util.Set;
 
 @Data
 public class UpdateUserRequest {
-    private String fullname;
+    private String name;
+    private String lastname;
+
     private String phone;
     private String email;
-    private Set<String> roles;
+
+    // CAMBIO: Simplificamos roles si queremos actualizar el rol principal
+    // O lo dejamos opcional si solo actualizamos perfil
+    private String role;
+
     private Boolean enabled;
+
+    // Opcional: si necesitas asignar curso al actualizar
     private Long courseId;
-// + getter y setter
 }
